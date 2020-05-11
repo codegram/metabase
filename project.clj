@@ -134,6 +134,8 @@
    [stencil "0.5.0"]                                                  ; Mustache templates for Clojure
    [toucan "1.15.1" :exclusions [org.clojure/java.jdbc honeysql]]     ; Model layer, hydration, and DB utilities
    [weavejester/dependency "0.2.1"]                                   ; Dependency graphs and topological sorting
+   ;; explicit version of BC specified to resolve illegal reflective access errors
+   [org.bouncycastle/bcprov-jdk15on "1.65"]                           ; Bouncy Castle crypto library
    ]
 
   :main ^:skip-aot metabase.core
