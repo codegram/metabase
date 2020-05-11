@@ -29,11 +29,52 @@
 ;;; |                                             metabase.driver impls                                              |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
+(defn- redshift-type->base-type
+  "Maps Redshift types to Metabase types to the best of our ability.
+   Source: https://docs.aws.amazon.com/redshift/latest/dg/c_Supported_data_types.html"
+  [field-type]
+  (condp re-matches field-type
+    #"smallint"   :type/Integer
+    #"int8"       :type/BigInteger
+    #"int.*"      :type/Integer
+    #"bigint"     :type/BigInteger
+
+    #"real"       :type/Float
+    #"float.*"    :type/Float
+    #"double.*"   :type/Float
+    #"decimal.*"  :type/Decimal
+
+    #"bool.*"     :type/Boolean
+
+    #"varchar.*"   :type/Text
+    #"char.*"      :type/Text
+
+    #"date"       :type/Date
+    #"time.+"     :type/DateTime
+
+    #".*"         :type/*))
+
+(defn- infer-specialized-type [{:keys [database-type base-type] :as original}]
+  "If the upstream-inferred type is *, try harder to specialize the type
+   with Redshift-specific knowledge."
+  (cond-> original
+    (= :type/* base-type) (assoc :base-type (redshift-type->base-type database-type))))
+
 ;; don't use the Postgres implementation for `describe-table` since it tries to fetch enums which Redshift doesn't
 ;; support
 (defmethod driver/describe-table :redshift
   [& args]
-  (apply (get-method driver/describe-table :sql-jdbc) args))
+  (let [orig (apply (get-method driver/describe-table :sql-jdbc) args)
+        inferred-fields (->> orig :fields (map infer-specialized-type) (into #{}))]
+    (assoc orig :fields inferred-fields)))
+
+;; Make sure we include the external tables (Spectrum) as well as the internal (?) ones.
+(defmethod driver/describe-database :redshift
+  [_driver database]
+  {:tables (set (jdbc/query (sql-jdbc.conn/db->pooled-connection-spec database)
+                              ["SELECT DISTINCT table_name as name, table_schema as schema
+                                FROM svv_columns
+                                WHERE table_schema NOT IN ('pg_internal','pg_catalog','information_schema')"]))}
 
 ;; The Postgres JDBC .getImportedKeys method doesn't work for Redshift, and we're not allowed to access
 ;; information_schema.constraint_column_usage, so we'll have to use this custom query instead
