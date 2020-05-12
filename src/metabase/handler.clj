@@ -2,6 +2,7 @@
   "Top-level Metabase Ring handler."
   (:require [metabase
              [config :as config]
+             [public-settings :as public-settings]
              [routes :as routes]]
             [metabase.middleware
              [auth :as mw.auth]
@@ -16,11 +17,26 @@
              [cookies :refer [wrap-cookies]]
              [gzip :refer [wrap-gzip]]
              [keyword-params :refer [wrap-keyword-params]]
-             [params :refer [wrap-params]]]))
+             [params :refer [wrap-params]]
+             [ssl :refer [ssl-redirect-response]]]))
 
 ;; required here because this namespace is not actually used anywhere but we need it to be loaded because it adds
 ;; impls for handling `core.async` channels as web server responses
 (classloader/require 'metabase.async.api-response)
+
+(defn- redirect-to-https-middleware
+  [handler]
+  (fn
+    ([request]
+     (if (and (public-settings/redirect-all-requests-to-https)
+          (= (:scheme request) :http))
+       (ssl-redirect-response request {:ssl-port (public-settings/https-port)})
+       (handler request)))
+    ([request respond raise]
+     (if (and (public-settings/redirect-all-requests-to-https)
+              (= (:scheme request) :http))
+       (respond (ssl-redirect-response request {:ssl-port (public-settings/https-port)}))
+       (handler request respond raise)))))
 
 (def app
   "The primary entry point to the Ring HTTP server."
@@ -49,5 +65,6 @@
    wrap-cookies                            ; Parses cookies in the request map and assocs as :cookies
    mw.misc/add-content-type                ; Adds a Content-Type header for any response that doesn't already have one
    mw.misc/disable-streaming-buffering     ; Add header to streaming (async) responses so ngnix doesn't buffer keepalive bytes
-   wrap-gzip))                             ; GZIP response if client can handle it
+   wrap-gzip                               ; GZIP response if client can handle it
+   redirect-to-https-middleware))          ; Redirect to HTTPS if configured to do so
 ;; ▲▲▲ PRE-PROCESSING ▲▲▲ happens from BOTTOM-TO-TOP
